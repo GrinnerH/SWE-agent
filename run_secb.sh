@@ -101,7 +101,7 @@ elif [ "$model" == "gemini-pro" ]; then
 elif [ "$model" == "human" ]; then
     model_name="human"
 elif [ "$model" == "deepseek" ]; then
-    model_name="openai/deepseek-chat"
+    model_name="deepseek/deepseek-chat"
     api_base="https://www.dmxapi.cn/v1"
 else
     echo "Invalid model: $model"
