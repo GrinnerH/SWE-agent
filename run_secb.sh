@@ -25,7 +25,7 @@ usage() {
     echo "  -b API_BASE  API Base URL (optional)"
     echo "  -h           Show this help message"
     echo ""
-    echo "Available models: sonnet, haiku, 4o, o1, o3, gemini-pro, flash, human"
+    echo "Available models: sonnet, haiku, 4o, o1, o3, gemini-pro, flash, human, deepseek"
     echo ""
     echo "Examples:"
     echo "  $0 poc"
@@ -100,9 +100,12 @@ elif [ "$model" == "gemini-pro" ]; then
     model_name="gemini/gemini-2.5-pro-preview-03-25"
 elif [ "$model" == "human" ]; then
     model_name="human"
+elif [ "$model" == "deepseek" ]; then
+    model_name="openai/deepseek-chat"
+    api_base="https://www.dmxapi.cn/v1"
 else
     echo "Invalid model: $model"
-    echo "Available models: sonnet, haiku, 4o, o3, gemini-pro, human"
+    echo "Available models: sonnet, haiku, 4o, o3, gemini-pro, human, deepseek"
     exit 1
 fi
 
