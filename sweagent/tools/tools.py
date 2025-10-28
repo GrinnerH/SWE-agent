@@ -59,6 +59,7 @@ class ToolFilterConfig(BaseModel):
 class ToolConfig(BaseModel):
     filter: ToolFilterConfig = ToolFilterConfig()
     bundles: list[Bundle] = Field(default_factory=list)
+    inline_commands: list[Command] = Field(default_factory=list)
 
     env_variables: dict[str, Any] = {}
     """Shorthand to set environment variables for the tools, effectively
@@ -137,6 +138,17 @@ class ToolConfig(BaseModel):
                     raise ValueError(msg)
                 commands.append(command)
                 tool_sources[command.name] = bundle.path
+        for command in self.inline_commands:
+            if command.name in tool_sources:
+                existing_source = tool_sources[command.name]
+                msg = (
+                    f"Tool '{command.name}' is defined multiple times:\n"
+                    f"  - First definition in: {existing_source}\n"
+                    "  - Duplicate inline definition"
+                )
+                raise ValueError(msg)
+            commands.append(command)
+            tool_sources[command.name] = Path("<inline>")
 
         return commands
 

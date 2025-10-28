@@ -31,6 +31,7 @@ from sweagent import (
 from sweagent.agent.action_sampler import AbstractActionSampler, ActionSamplerConfig
 from sweagent.agent.history_processors import DefaultHistoryProcessor, HistoryProcessor
 from sweagent.agent.hooks.abstract import AbstractAgentHook, CombinedAgentHook
+from sweagent.agent.hypothesis_state import HypothesisState, SanitizerReportAnalyzer
 from sweagent.agent.models import (
     AbstractModel,
     HumanModel,
@@ -59,6 +60,7 @@ from sweagent.tools.parsing import (
     ActionOnlyParser,
     ThoughtActionParser,
 )
+from sweagent.tools.commands import Command, Argument
 from sweagent.tools.tools import ToolConfig, ToolHandler
 from sweagent.types import (
     AgentInfo,
@@ -163,10 +165,19 @@ class DefaultAgentConfig(BaseModel):
     """
     action_sampler: ActionSamplerConfig | None = None
 
+    hypothesis: "HypothesisConfig | None" = None
     type: Literal["default"] = "default"
 
     # pydantic config
     model_config = ConfigDict(extra="forbid")
+
+
+class HypothesisConfig(BaseModel):
+    enabled: bool = False
+    command_name: str = "hypothesis_update"
+    sanitizer_max_lines: int = 160
+    include_prompt_blocks: bool = True
+    type: Literal["hypothesis"] = "hypothesis"
 
 
 class RetryAgentConfig(BaseModel):
@@ -440,6 +451,7 @@ class DefaultAgent(AbstractAgent):
         _catch_errors: bool = True,
         _always_require_zero_exit_code: bool = False,
         action_sampler_config: ActionSamplerConfig | None = None,
+        hypothesis_config: HypothesisConfig | None = None,
     ):
         """The agent handles the behaviour of the model and how it interacts with the environment.
 
@@ -458,6 +470,8 @@ class DefaultAgent(AbstractAgent):
         self.history_processors = history_processors
         self.max_requeries = max_requeries
         self.logger = get_logger("swea-agent", emoji="🤠")
+        self.hypothesis_config = hypothesis_config
+        self._hypothesis_state: HypothesisState | None = None
         # Set in run method
         self._env: SWEEnv | None = None
         self._problem_statement: ProblemStatement | ProblemStatementConfig | None = None
@@ -490,6 +504,27 @@ class DefaultAgent(AbstractAgent):
         # To ensure that all models stay completely independent, we deepcopy the
         # model config, because it lives on as a property in the model, tools, etc.
         config = config.model_copy(deep=True)
+        hypothesis_config = config.hypothesis
+        if hypothesis_config and hypothesis_config.enabled:
+            command_name = hypothesis_config.command_name or "hypothesis_update"
+            inline_command = Command(
+                name=command_name,
+                docstring=(
+                    "Update the in-memory hypothesis tracker with a JSON payload. "
+                    "Use this to report evidence, refine hypotheses, add new ones, or request a switch."
+                ),
+                signature=f"{command_name} <payload>",
+                arguments=[
+                    Argument(
+                        name="payload",
+                        type="string",
+                        description="JSON object describing the hypothesis update.",
+                        required=True,
+                    )
+                ],
+            )
+            if not any(cmd.name == inline_command.name for cmd in config.tools.inline_commands):
+                config.tools.inline_commands.append(inline_command)
         model = get_model(config.model, config.tools)
         return cls(
             templates=config.templates,
@@ -498,6 +533,7 @@ class DefaultAgent(AbstractAgent):
             model=model,
             max_requeries=config.max_requeries,
             action_sampler_config=config.action_sampler,
+            hypothesis_config=hypothesis_config,
         )
 
     def add_hook(self, hook: AbstractAgentHook) -> None:
@@ -535,6 +571,9 @@ class DefaultAgent(AbstractAgent):
         for processor in self.history_processors:
             messages = processor(messages)
 
+        if self._hypothesis_state and self.hypothesis_config and self.hypothesis_config.include_prompt_blocks:
+            messages = self._append_hypothesis_context(messages)
+
         return messages  # type: ignore
 
     # Methods
@@ -544,6 +583,29 @@ class DefaultAgent(AbstractAgent):
         """Adds an item to the history."""
         self._chook.on_query_message_added(**item)
         self.history.append(item)  # type: ignore
+
+    def _append_hypothesis_context(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not self._hypothesis_state:
+            return history
+        context = self._hypothesis_state.build_prompt_strings()
+        message = (
+            "## Hypothesis Focus\n"
+            f"{context['hypothesis_current_block']}\n\n"
+            "## Hypothesis Board\n"
+            f"{context['hypothesis_board']}\n\n"
+            "## Sanitizer Ground Truth\n"
+            f"{context['sanitizer_context']}"
+        )
+        contextual_history = list(history)
+        contextual_history.append(
+            {
+                "role": "user",
+                "content": message,
+                "agent": self.name,
+                "message_type": "hypothesis_context",
+            }
+        )
+        return contextual_history
 
     def setup(
         self,
@@ -578,6 +640,7 @@ class DefaultAgent(AbstractAgent):
         assert self._problem_statement is not None
         encoded_statement = base64.b64encode(problem_statement.get_problem_statement().encode("utf-8")).decode("utf-8")
         self._env.set_env_variables({"PROBLEM_STATEMENT_BASE64": encoded_statement})
+        self._initialize_hypothesis_support()
         self.add_system_message_to_history()
         self.add_demonstrations_to_history()
         self.add_instance_template_to_history(state=self.tools.get_state(self._env))
@@ -654,6 +717,49 @@ class DefaultAgent(AbstractAgent):
             repo=self._env.repo.repo_name if self._env.repo is not None else "",
             **self._problem_statement.get_extra_fields(),
         )
+
+    def _initialize_hypothesis_support(self) -> None:
+        if not (self.hypothesis_config and self.hypothesis_config.enabled):
+            return
+        assert self._problem_statement is not None
+        analyzer = SanitizerReportAnalyzer(self.hypothesis_config.sanitizer_max_lines)
+        report = analyzer.analyze(self._problem_statement.get_problem_statement())
+        self._hypothesis_state = HypothesisState(report)
+        self.logger.info(
+            "Initialized hypothesis tracker with error '%s' (active=%s)",
+            report.error_type,
+            self._hypothesis_state.active_id,
+        )
+        self._update_hypothesis_extra_fields()
+
+    def _update_hypothesis_extra_fields(self) -> None:
+        if not self._hypothesis_state:
+            return
+        if self._problem_statement and hasattr(self._problem_statement, "extra_fields"):
+            extra = getattr(self._problem_statement, "extra_fields")
+            if isinstance(extra, dict):
+                extra.update(self._hypothesis_state.to_extra_fields())
+
+    def _maybe_handle_hypothesis_action(self, step: StepOutput) -> bool:
+        if not (self.hypothesis_config and self.hypothesis_config.enabled and self._hypothesis_state):
+            return False
+        command_name = self.hypothesis_config.command_name or "hypothesis_update"
+        action = step.action.strip()
+        if not action.startswith(command_name):
+            return False
+        payload = action[len(command_name) :].strip()
+        if not payload:
+            msg = "hypothesis_update command requires a JSON payload argument."
+            raise FormatError(msg)
+        summary = self._hypothesis_state.apply_update_from_json(payload)
+        self._update_hypothesis_extra_fields()
+        assert self._env is not None
+        step.state = self.tools.get_state(self._env)
+        step.observation = summary
+        self.logger.info("📌 hypothesis_update\n%s", summary)
+        step.exit_status = "ok"
+        step.done = False
+        return True
 
     def _add_templated_messages_to_history(
         self,
@@ -951,6 +1057,8 @@ class DefaultAgent(AbstractAgent):
         Returns:
             action_execution_output: action execution output
         """
+        if self._maybe_handle_hypothesis_action(step):
+            return step
         if self.tools.should_block_action(step.action):
             raise _BlockedActionError()
 

@@ -1,0 +1,65 @@
+agent:
+  templates:
+    system_template: |-
+      You are a security analyst using a hypothesis-driven workflow. Always ground your reasoning in the sanitizer crash details and keep exploration focused on the active hypothesis.
+
+      ## Sanitizer Anchor
+      {{sanitizer_context}}
+
+      ## Active Hypothesis
+      {{hypothesis_current_block}}
+
+      ## Hypothesis Board (overview)
+      {{hypothesis_board}}
+
+      ### Update Protocol
+      - After gathering evidence or changing direction, call `hypothesis_update` with a JSON payload.
+      - Payload fields you can use:
+        * `hypothesis_id` (defaults to current)
+        * `description`, `status`, `priority`
+        * `add_open_questions`, `resolve_open_questions`
+        * `add_suggested_steps`, `drop_suggested_steps`
+        * `add_evidence` / `notes`
+        * `new_hypotheses` (list of objects with `description`, optional `id`)
+        * `switch_to` to activate another hypothesis
+        * `found_support` / `found_contradiction` (booleans)
+
+      Always validate evidence before switching hypotheses. Keep hypothesis updates concise and structured.
+    instance_template: |-
+      Sanitizer highlight:
+
+      {{sanitizer_context}}
+
+      Start by inspecting the crash location and collect evidence that confirms or refutes the active hypothesis.
+      Use `hypothesis_update` to log findings as you go.
+
+      (Open file: {{open_file}})
+      (Current directory: {{working_dir}})
+      bash-$
+    next_step_template: |-
+      {{observation}}
+      (Open file: {{open_file}})
+      (Current directory: {{working_dir}})
+      bash-$
+  tools:
+    env_variables:
+      WINDOW: 120
+      OVERLAP: 4
+    bundles:
+      - path: tools/registry
+      - path: tools/defaults
+      - path: tools/search
+      - path: tools/change
+      - path: tools/edit_replace
+      - path: tools/submit
+    enable_bash_tool: true
+    parse_function:
+      type: function_calling
+  history_processors:
+    - type: last_n_observations
+      n: 6
+  hypothesis:
+    enabled: true
+    command_name: hypothesis_update
+    sanitizer_max_lines: 200
+    include_prompt_blocks: true

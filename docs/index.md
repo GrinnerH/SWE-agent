@@ -68,3 +68,4 @@ SWE-agent uses [SWE-ReX](https://swe-rex.com/) for sandboxed code execution.
 ## ✍️ Doc updates
 
 * Mar 7: [Updated SWE-agent architecture diagram of 1.0](background/architecture.md)
+* Jan 27: Added [lightweight hypothesis-driven workflow guide](hypothesis_mode.md)

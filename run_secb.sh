@@ -23,6 +23,7 @@ usage() {
     echo "  -n CALLS     Per instance call limit (default: 75)"
     echo "  -w WORKERS   Number of workers (default: 1)"
     echo "  -b API_BASE  API Base URL (optional)"
+    echo "  -f CONFIG    Override agent config file (optional)"
     echo "  -h           Show this help message"
     echo ""
     echo "Available models: sonnet, haiku, 4o, o1, o3, gemini-pro, flash, human, deepseek"
@@ -69,7 +70,9 @@ api_base=""
 workers="1"
 
 # Parse command line options
-while getopts "m:c:e:s:l:n:w:b:h" opt; do
+config_override=""
+
+while getopts "m:c:e:s:l:n:w:b:f:h" opt; do
     case $opt in
         m) model="$OPTARG" ;;
         c) cost_limit="$OPTARG" ;;
@@ -79,10 +82,15 @@ while getopts "m:c:e:s:l:n:w:b:h" opt; do
         n) call_limit="$OPTARG" ;;
         w) workers="$OPTARG" ;;
         b) api_base="$OPTARG" ;;
+        f) config_override="$OPTARG" ;;
         h) usage; exit 0 ;;
         \?) echo "Invalid option: -$OPTARG" >&2; usage; exit 1 ;;
     esac
 done
+
+if [ -n "$config_override" ]; then
+    config="$config_override"
+fi
 
 clear
 
