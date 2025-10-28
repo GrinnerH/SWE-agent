@@ -63,3 +63,5 @@ agent:
     command_name: hypothesis_update
     sanitizer_max_lines: 200
     include_prompt_blocks: true
+    reminder_steps: 5
+    history_limit: 40

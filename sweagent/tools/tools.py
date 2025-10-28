@@ -203,6 +203,7 @@ class ToolHandler:
         self.logger = get_logger("swea-tools", emoji="🧰")
         # For testing: Return this state instead of querying the environment
         self.mock_state: dict[str, str] | None = None
+        self._inline_command_names = {cmd.name for cmd in self.config.inline_commands}
 
     @classmethod
     def from_config(cls, config: ToolConfig) -> Self:
@@ -240,6 +241,8 @@ class ToolHandler:
 
     async def _is_command_available(self, env, command: str, env_vars: dict[str, str]) -> None:
         if command == "bash":
+            return
+        if command in self._inline_command_names:
             return
         try:
             await env.deployment.runtime.execute(

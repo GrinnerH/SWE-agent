@@ -5,6 +5,7 @@ import base64
 import copy
 import json
 import logging
+import shlex
 import time
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -177,6 +178,10 @@ class HypothesisConfig(BaseModel):
     command_name: str = "hypothesis_update"
     sanitizer_max_lines: int = 160
     include_prompt_blocks: bool = True
+    enable_auto_reminder: bool = True
+    reminder_steps: int = 5
+    reminder_message: str | None = None
+    history_limit: int = 50
     type: Literal["hypothesis"] = "hypothesis"
 
 
@@ -525,8 +530,9 @@ class DefaultAgent(AbstractAgent):
             )
             if not any(cmd.name == inline_command.name for cmd in config.tools.inline_commands):
                 config.tools.inline_commands.append(inline_command)
+                config.tools = ToolConfig.model_validate(config.tools.model_dump())
         model = get_model(config.model, config.tools)
-        return cls(
+        agent = cls(
             templates=config.templates,
             tools=ToolHandler(config.tools),
             history_processors=config.history_processors,
@@ -535,6 +541,20 @@ class DefaultAgent(AbstractAgent):
             action_sampler_config=config.action_sampler,
             hypothesis_config=hypothesis_config,
         )
+        if (
+            hypothesis_config
+            and hypothesis_config.enabled
+            and hypothesis_config.enable_auto_reminder
+        ):
+            from sweagent.agent.hooks.hypothesis_reminder import HypothesisReminderHook
+
+            agent.add_hook(
+                HypothesisReminderHook(
+                    reminder_steps=hypothesis_config.reminder_steps,
+                    message=hypothesis_config.reminder_message,
+                )
+            )
+        return agent
 
     def add_hook(self, hook: AbstractAgentHook) -> None:
         """Add hook to agent"""
@@ -724,7 +744,8 @@ class DefaultAgent(AbstractAgent):
         assert self._problem_statement is not None
         analyzer = SanitizerReportAnalyzer(self.hypothesis_config.sanitizer_max_lines)
         report = analyzer.analyze(self._problem_statement.get_problem_statement())
-        self._hypothesis_state = HypothesisState(report)
+        history_limit = self.hypothesis_config.history_limit if self.hypothesis_config else 50
+        self._hypothesis_state = HypothesisState(report, history_limit=history_limit)
         self.logger.info(
             "Initialized hypothesis tracker with error '%s' (active=%s)",
             report.error_type,
@@ -747,11 +768,41 @@ class DefaultAgent(AbstractAgent):
         action = step.action.strip()
         if not action.startswith(command_name):
             return False
-        payload = action[len(command_name) :].strip()
-        if not payload:
-            msg = "hypothesis_update command requires a JSON payload argument."
-            raise FormatError(msg)
-        summary = self._hypothesis_state.apply_update_from_json(payload)
+
+        payload_str: str | None = None
+        if step.tool_calls:
+            for call in step.tool_calls:
+                fn = call.get("function", {}) if isinstance(call, dict) else {}
+                if fn.get("name") != command_name:
+                    continue
+                arguments = fn.get("arguments")
+                parsed_args: dict[str, Any] | None = None
+                if isinstance(arguments, str):
+                    try:
+                        parsed_args = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        payload_str = arguments
+                elif isinstance(arguments, dict):
+                    parsed_args = arguments
+                if parsed_args is not None:
+                    payload_value = parsed_args.get("payload", parsed_args)
+                    if isinstance(payload_value, dict):
+                        payload_str = json.dumps(payload_value)
+                    else:
+                        payload_str = str(payload_value)
+                break
+
+        if payload_str is None:
+            payload_candidate = action[len(command_name) :].strip()
+            if not payload_candidate:
+                msg = "hypothesis_update command requires a JSON payload argument."
+                raise FormatError(msg)
+            payload_str = payload_candidate
+
+        summary = self._hypothesis_state.apply_update_from_json(
+            payload_str,
+            step_index=len(self.trajectory) + 1,
+        )
         self._update_hypothesis_extra_fields()
         assert self._env is not None
         step.state = self.tools.get_state(self._env)

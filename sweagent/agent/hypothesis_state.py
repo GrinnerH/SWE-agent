@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import textwrap
+import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -142,11 +143,14 @@ class HypothesisEntry:
 class HypothesisState:
     """Lightweight in-memory tracker for hypothesis-driven exploration."""
 
-    def __init__(self, report: SanitizerReport):
+    def __init__(self, report: SanitizerReport, history_limit: int = 50):
         self.report = report
         self.hypotheses: dict[str, HypothesisEntry] = {}
         self.active_id = ""
         self._counter = 1
+        self.history_limit = max(history_limit, 1)
+        self.update_log: list[dict[str, Any]] = []
+        self.last_update_step: int = -1
         self._create_primary_hypothesis()
 
     def _create_primary_hypothesis(self) -> None:
@@ -184,11 +188,11 @@ class HypothesisState:
             elif hyp_id != hypothesis_id and entry.status == "active":
                 entry.status = "pending"
 
-    def apply_update_from_json(self, raw_payload: str) -> str:
+    def apply_update_from_json(self, raw_payload: str, *, step_index: int | None = None) -> str:
         payload = self._loads_payload(raw_payload)
-        return self.apply_update(payload)
+        return self.apply_update(payload, step_index=step_index, raw_payload=raw_payload)
 
-    def apply_update(self, payload: dict[str, Any]) -> str:
+    def apply_update(self, payload: dict[str, Any], *, step_index: int | None = None, raw_payload: str | None = None) -> str:
         if not isinstance(payload, dict):
             raise ValueError("Hypothesis update payload must be a JSON object.")
 
@@ -275,8 +279,23 @@ class HypothesisState:
             summary_lines.append(f"Activated hypothesis {self.active_id}.")
         elif self.active_id != target_id:
             summary_lines.append(f"Active hypothesis remains {self.active_id}.")
+        if entry.open_questions:
+            recent_questions = ", ".join(entry.open_questions[-3:])
+            summary_lines.append(
+                f"Open questions ({len(entry.open_questions)} total): {recent_questions}"
+            )
+        if entry.suggested_steps:
+            summary_lines.append(f"Suggested next steps ({len(entry.suggested_steps)} total).")
 
-        return "\n".join(summary_lines)
+        summary = "\n".join(summary_lines)
+        self._record_update(
+            step_index=step_index,
+            summary=summary,
+            payload=payload,
+            raw_payload=raw_payload,
+            active_id=self.active_id,
+        )
+        return summary
 
     def _find_next_pending(self, exclude: set[str] | None = None) -> str | None:
         exclude = exclude or set()
@@ -308,6 +327,8 @@ class HypothesisState:
             "hypothesis_state": {
                 "active_id": self.active_id,
                 "hypotheses": {hid: hyp.to_dict() for hid, hyp in self.hypotheses.items()},
+                "update_log": self.update_log[-self.history_limit :],
+                "last_update_step": self.last_update_step,
             },
             **self.build_prompt_strings(),
             "sanitizer_summary": self.report.to_prompt_dict(),
@@ -359,3 +380,38 @@ class HypothesisState:
             {stack_text}
             """
         ).strip()
+
+    def get_active_entry(self) -> HypothesisEntry | None:
+        return self.hypotheses.get(self.active_id)
+
+    def has_open_questions(self) -> bool:
+        current = self.get_active_entry()
+        return bool(current and current.open_questions)
+
+    def _record_update(
+        self,
+        *,
+        step_index: int | None,
+        summary: str,
+        payload: dict[str, Any],
+        raw_payload: str | None,
+        active_id: str,
+    ) -> None:
+        if step_index is not None:
+            self.last_update_step = step_index
+        entry = {
+            "timestamp": time.time(),
+            "step": step_index,
+            "active_id": active_id,
+            "summary": summary,
+            "payload": payload,
+            "raw": raw_payload,
+        }
+        current = self.get_active_entry()
+        if current:
+            entry["open_questions"] = list(current.open_questions)
+            entry["suggested_steps"] = list(current.suggested_steps)
+            entry["evidence"] = list(current.evidence)
+        self.update_log.append(entry)
+        if len(self.update_log) > self.history_limit:
+            self.update_log = self.update_log[-self.history_limit :]
