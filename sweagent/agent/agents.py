@@ -186,6 +186,7 @@ class HypothesisConfig(BaseModel):
     bootstrap_message: str | None = None
     bootstrap_followup_steps: int = 1
     bootstrap_followup_message: str | None = None
+    enable_phase_guidance: bool = True
     type: Literal["hypothesis"] = "hypothesis"
 
 
@@ -565,6 +566,10 @@ class DefaultAgent(AbstractAgent):
                         message=hypothesis_config.reminder_message,
                     )
                 )
+            if hypothesis_config.enable_phase_guidance:
+                from sweagent.agent.hooks.hypothesis_bridge import HypothesisBridgeHook
+
+                agent.add_hook(HypothesisBridgeHook())
         return agent
 
     def add_hook(self, hook: AbstractAgentHook) -> None:

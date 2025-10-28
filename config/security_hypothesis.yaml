@@ -86,3 +86,4 @@ agent:
     reminder_steps: 5
     history_limit: 40
     enable_bootstrap: true
+    enable_phase_guidance: true

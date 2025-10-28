@@ -114,6 +114,8 @@ class HypothesisEntry:
     open_questions: list[str] = field(default_factory=list)
     suggested_steps: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
+    keyframes: dict[str, str] = field(default_factory=dict)
+    verification_plan: list[str] = field(default_factory=list)
 
     def to_prompt_block(self) -> str:
         lines = [f"[{self.hypothesis_id}] ({self.status}) {self.description}"]
@@ -126,6 +128,13 @@ class HypothesisEntry:
         if self.evidence:
             lines.append("  Evidence:")
             lines.extend(f"    - {ev}" for ev in self.evidence[-3:])
+        if self.keyframes:
+            lines.append("  Keyframes:")
+            for name, desc in self.keyframes.items():
+                lines.append(f"    - {name}: {desc}")
+        if self.verification_plan:
+            lines.append("  Verification plan:")
+            lines.extend(f"    - {step}" for step in self.verification_plan)
         return "\n".join(lines)
 
     def to_dict(self) -> dict[str, Any]:
@@ -137,6 +146,8 @@ class HypothesisEntry:
             "open_questions": self.open_questions,
             "suggested_steps": self.suggested_steps,
             "evidence": self.evidence,
+            "keyframes": self.keyframes,
+            "verification_plan": self.verification_plan,
         }
 
 
@@ -218,6 +229,10 @@ class HypothesisState:
             entry.status = payload["status"]
         if "priority" in payload:
             entry.priority = int(payload["priority"])
+        if "keyframes" in payload and isinstance(payload["keyframes"], dict):
+            entry.keyframes = {str(k): str(v) for k, v in payload["keyframes"].items()}
+        if "verification_plan" in payload:
+            entry.verification_plan = [str(item) for item in self._as_iterable(payload.get("verification_plan"))]
 
         for key, container in (
             ("add_open_questions", entry.open_questions),
@@ -252,6 +267,8 @@ class HypothesisState:
                 priority=int(new_entry.get("priority", len(self.hypotheses))),
                 open_questions=list(new_entry.get("open_questions", [])),
                 suggested_steps=list(new_entry.get("suggested_steps", [])),
+                keyframes={str(k): str(v) for k, v in new_entry.get("keyframes", {}).items()} if isinstance(new_entry.get("keyframes"), dict) else {},
+                verification_plan=[str(item) for item in self._as_iterable(new_entry.get("verification_plan"))],
             )
             self.hypotheses[hyp_id] = hyp
             new_hypotheses.append(hyp_id)
@@ -279,6 +296,12 @@ class HypothesisState:
             summary_lines.append(f"Activated hypothesis {self.active_id}.")
         elif self.active_id != target_id:
             summary_lines.append(f"Active hypothesis remains {self.active_id}.")
+        if entry.keyframes:
+            keyframe_preview = ", ".join(f"{k}:{v}" for k, v in list(entry.keyframes.items())[:4])
+            summary_lines.append(f"Keyframes -> {keyframe_preview}")
+        if entry.verification_plan:
+            plan_preview = ", ".join(entry.verification_plan[:3])
+            summary_lines.append(f"Verification plan steps -> {plan_preview}")
         if entry.open_questions:
             recent_questions = ", ".join(entry.open_questions[-3:])
             summary_lines.append(
@@ -406,6 +429,7 @@ class HypothesisState:
             "summary": summary,
             "payload": payload,
             "raw": raw_payload,
+            "phase_marker": payload.get("phase_marker") if isinstance(payload, dict) else None,
         }
         current = self.get_active_entry()
         if current:
