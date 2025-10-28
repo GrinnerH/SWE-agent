@@ -113,8 +113,8 @@ class HypothesisBridgeHook(AbstractAgentHook):
             "round3a_origin_validation.prompt": "\nUpon finishing Round 3a, call `hypothesis_update` with `\"phase_marker\": \"ROUND3A_DONE\"`.",
             "round3b_lifecycle_validation.prompt": "\nWhen Round 3b is complete, set `\"phase_marker\": \"ROUND3B_DONE\"` in your next `hypothesis_update`.",
             "round3_decision_prompt.prompt": "\nRespond with `\"phase_marker\": \"DECISION_A\"` to revisit lifecycle validation or `\"phase_marker\": \"DECISION_B\"` to proceed to the final gate.",
-            "validation_failed_guidance.prompt": "\nAfter addressing the failure, resume by calling `hypothesis_update` with `\"phase_marker\": \"ROUND3B_DONE\"`.",
-            "final_gate.prompt": "\nWhen the final report is ready, submit it via `hypothesis_update` with `\"phase_marker\": \"FINAL_REPORT\"`.",
+            "validation_failed_guidance.prompt": "\nAfter addressing the failure, call `hypothesis_update` with `\"phase_marker\": \"FINAL_GATE_FAILED\"` to record the conflict, then resume lifecycle validation with `\"phase_marker\": \"ROUND3B_DONE\"` once new evidence is gathered.",
+            "final_gate.prompt": "\nWhen the final report is ready, submit it via `hypothesis_update` with `\"phase_marker\": \"FINAL_REPORT\"`. If validation fails, call `hypothesis_update` with `\"phase_marker\": \"FINAL_GATE_FAILED\"` and describe the logical conflict.",
         }
         if filename in marker_instructions:
             content = content + "\n" + marker_instructions[filename]

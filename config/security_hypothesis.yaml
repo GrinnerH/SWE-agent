@@ -15,8 +15,9 @@ agent:
 
       ### Hypothesis Update Protocol
       - After each meaningful observation, new evidence, or change of direction, call `hypothesis_update` with a JSON payload.
-      - Useful fields: `hypothesis_id`, `description`, `status`, `add_open_questions`, `resolve_open_questions`, `add_suggested_steps`, `add_evidence`, `new_hypotheses`, `found_support`, `found_contradiction`.
-      - Use updates to register PoC ideas, partial repro attempts, contradictions, and hypothesis switches.
+      - Recon survey blueprint (`phase_marker: "BLUEPRINT_DONE"`) must include for each hypothesis: `description`, `keyframes` (`crash`, `propagation`, `origin`, `lifecycle`), `verification_plan`, `suggested_steps`, `open_questions`, and at least one fallback hypothesis.
+      - For subsequent rounds, mark progress with `phase_marker` values (`ROUND12_DONE`, `ROUND3A_DONE`, `ROUND3B_DONE`, `DECISION_A/B`, `FINAL_REPORT`) inside the `hypothesis_update` payload—this drives the guided bridges.
+      - Always register PoC ideas, partial repro attempts, contradictions, and hypothesis switches via `hypothesis_update`. Use `found_contradiction` with `switch_to` when abandoning a branch.
 
       Stay disciplined: no repository fixes, no premature submissions. All work should drive toward a reproducible PoC.
     instance_template: |-
@@ -52,7 +53,7 @@ agent:
       ### Rules
       - Deliverables are PoC assets only—do **not** patch the repository or submit fixes.
       - Do **not** run the `submit` command unless `secb repro` reproduces the sanitizer crash and the PoC is saved under `/testcase`.
-      - After every meaningful observation, call `hypothesis_update` to keep the board synchronized with reality.
+      - After every meaningful observation, call `hypothesis_update` to keep the board synchronized with reality and include the appropriate `phase_marker` when completing each recon survey round.
 
       (Open file: {{open_file}})
       (Current directory: {{working_dir}})
