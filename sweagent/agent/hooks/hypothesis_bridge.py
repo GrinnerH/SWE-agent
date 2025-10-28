@@ -56,15 +56,39 @@ class HypothesisBridgeHook(AbstractAgentHook):
             return
 
         if self._phase == "round12_pending":
-            self._handle_phase(marker, "ROUND12_DONE", next_phase="round3a_pending", next_prompt="round3a_origin_validation.prompt", next_expected="ROUND3A_DONE")
+            self._handle_phase(
+                step,
+                marker,
+                "ROUND12_DONE",
+                next_phase="round3a_pending",
+                next_prompt="round3a_origin_validation.prompt",
+                next_expected="ROUND3A_DONE",
+                validator=self._round12_output_ready,
+            )
             return
 
         if self._phase == "round3a_pending":
-            self._handle_phase(marker, "ROUND3A_DONE", next_phase="round3b_pending", next_prompt="round3b_lifecycle_validation.prompt", next_expected="ROUND3B_DONE")
+            self._handle_phase(
+                step,
+                marker,
+                "ROUND3A_DONE",
+                next_phase="round3b_pending",
+                next_prompt="round3b_lifecycle_validation.prompt",
+                next_expected="ROUND3B_DONE",
+                validator=self._round3a_output_ready,
+            )
             return
 
         if self._phase == "round3b_pending":
-            self._handle_phase(marker, "ROUND3B_DONE", next_phase="decision_pending", next_prompt="round3_decision_prompt.prompt", next_expected=None)
+            self._handle_phase(
+                step,
+                marker,
+                "ROUND3B_DONE",
+                next_phase="decision_pending",
+                next_prompt="round3_decision_prompt.prompt",
+                next_expected=None,
+                validator=self._round3b_output_ready,
+            )
             return
 
         if self._phase == "decision_pending":
@@ -183,6 +207,65 @@ class HypothesisBridgeHook(AbstractAgentHook):
         self._steps_since_prompt = 0
         self._reminder_sent = False
 
+    def _round12_output_ready(self, step: StepOutput) -> tuple[bool, list[str]]:
+        text = (step.output or "")
+        requirements = [
+            "## Immediate Cause",
+            "## Origin Trace",
+            "## Reasoning State Snapshot",
+        ]
+        missing = [f'missing section "{section}"' for section in requirements if section not in text]
+        return (len(missing) == 0, missing)
+
+    def _round3a_output_ready(self, step: StepOutput) -> tuple[bool, list[str]]:
+        text = (step.output or "")
+        requirements = [
+            "### Question",
+            "### Findings",
+            "### Table Update",
+            "### Hypothesis Impact",
+            "### Reasoning State Update",
+        ]
+        missing = [f'missing section "{section}"' for section in requirements if section not in text]
+        return (len(missing) == 0, missing)
+
+    def _round3b_output_ready(self, step: StepOutput) -> tuple[bool, list[str]]:
+        text = (step.output or "")
+        requirements = [
+            "### Primary Path Exploration",
+            "### Pivot Checkpoint Results",
+            "### Table Update",
+            "### Hypothesis Impact",
+            "### Reasoning State Update",
+        ]
+        missing = [f'missing section "{section}"' for section in requirements if section not in text]
+        return (len(missing) == 0, missing)
+
+    def _send_phase_fixup(self, marker: str, issues: list[str]) -> None:
+        agent = self._agent
+        if agent is None:
+            return
+        phase_description = {
+            "ROUND12_DONE": "Round 1-2 output",
+            "ROUND3A_DONE": "Round 3a output",
+            "ROUND3B_DONE": "Round 3b output",
+        }.get(marker, "Current round output")
+        message = (
+            f"{phase_description} is incomplete. Please include the missing sections before continuing:\n"
+            + "\n- ".join([""] + issues)
+            + "\nRemember to resend `hypothesis_update` with the same `phase_marker`."
+        )
+        agent._append_history(
+            {
+                "role": "user",
+                "content": message,
+                "agent": agent.name,
+                "message_type": "observation",
+            }
+        )
+        self._steps_since_prompt = 0
+        self._reminder_sent = False
+
     def _set_phase(self, phase: str, expected_marker: str | None):
         self._phase = phase
         self._expected_marker = expected_marker
@@ -191,14 +274,20 @@ class HypothesisBridgeHook(AbstractAgentHook):
 
     def _handle_phase(
         self,
+        step: StepOutput,
         marker: str | None,
         expected_marker: str,
         *,
         next_phase: str,
         next_prompt: str,
         next_expected: str | None,
+        validator,
     ) -> None:
         if marker == expected_marker and marker not in self._handled_markers:
+            ready, issues = validator(step)
+            if not ready:
+                self._send_phase_fixup(expected_marker, issues)
+                return
             self._handled_markers.add(marker)
             self._append_bridge(next_prompt)
             self._set_phase(next_phase, next_expected)

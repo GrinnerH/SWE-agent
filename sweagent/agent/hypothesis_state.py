@@ -189,6 +189,9 @@ class HypothesisState:
         self._counter += 1
         return new_id
 
+    def allocate_id(self) -> str:
+        return self._allocate_id()
+
     def set_active(self, hypothesis_id: str) -> None:
         if hypothesis_id not in self.hypotheses:
             raise KeyError(f"Hypothesis '{hypothesis_id}' does not exist.")

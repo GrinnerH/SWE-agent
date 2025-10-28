@@ -187,6 +187,7 @@ class HypothesisConfig(BaseModel):
     bootstrap_followup_steps: int = 1
     bootstrap_followup_message: str | None = None
     enable_phase_guidance: bool = True
+    enable_discipline: bool = True
     type: Literal["hypothesis"] = "hypothesis"
 
 
@@ -570,6 +571,10 @@ class DefaultAgent(AbstractAgent):
                 from sweagent.agent.hooks.hypothesis_bridge import HypothesisBridgeHook
 
                 agent.add_hook(HypothesisBridgeHook())
+            if hypothesis_config.enable_discipline:
+                from sweagent.agent.hooks.recon_discipline import ReconDisciplineHook
+
+                agent.add_hook(ReconDisciplineHook())
         return agent
 
     def add_hook(self, hook: AbstractAgentHook) -> None:
@@ -815,10 +820,7 @@ class DefaultAgent(AbstractAgent):
                 raise FormatError(msg)
             payload_str = payload_candidate
 
-        summary = self._hypothesis_state.apply_update_from_json(
-            payload_str,
-            step_index=len(self.trajectory) + 1,
-        )
+        summary = self._handle_hypothesis_payload(payload_str)
         self._update_hypothesis_extra_fields()
         assert self._env is not None
         step.state = self.tools.get_state(self._env)
@@ -827,6 +829,96 @@ class DefaultAgent(AbstractAgent):
         step.exit_status = "ok"
         step.done = False
         return True
+
+    def _handle_hypothesis_payload(self, payload_str: str) -> str:
+        step_index = len(self.trajectory) + 1
+        try:
+            payload_obj = json.loads(payload_str)
+        except json.JSONDecodeError:
+            payload_obj = None
+
+        if isinstance(payload_obj, dict) and "hypotheses" in payload_obj:
+            summaries: list[str] = []
+            marker = payload_obj.get("phase_marker")
+            hypotheses = payload_obj.get("hypotheses") or []
+            fallback = payload_obj.get("new_hypotheses") or payload_obj.get("fallback_hypotheses") or []
+
+            for idx, item in enumerate(hypotheses):
+                if not isinstance(item, dict):
+                    continue
+                hyp_payload = self._blueprint_payload_from_item(
+                    item,
+                    default_id="H0_primary" if idx == 0 else None,
+                    status="active" if idx == 0 else item.get("status", "pending"),
+                    marker=marker if idx == 0 else None,
+                )
+                summary = self._hypothesis_state.apply_update(
+                    hyp_payload,
+                    step_index=step_index,
+                    raw_payload=payload_str,
+                )
+                summaries.append(summary)
+
+            for item in fallback:
+                if not isinstance(item, dict):
+                    continue
+                fallback_payload = self._blueprint_payload_from_item(
+                    item,
+                    default_id=None,
+                    status=item.get("status", "pending"),
+                    marker=None,
+                )
+                summary = self._hypothesis_state.apply_update(
+                    fallback_payload,
+                    step_index=step_index,
+                    raw_payload=payload_str,
+                )
+                summaries.append(summary)
+
+            if summaries:
+                return "\n".join(summaries)
+
+        return self._hypothesis_state.apply_update_from_json(
+            payload_str,
+            step_index=step_index,
+        )
+
+    def _blueprint_payload_from_item(
+        self,
+        item: dict[str, Any],
+        *,
+        default_id: str | None,
+        status: str,
+        marker: str | None,
+    ) -> dict[str, Any]:
+        hypothesis_id = item.get("id") or default_id or self._hypothesis_state.allocate_id()
+        keyframes = item.get("keyframes") or {}
+        if isinstance(keyframes, list):
+            keyframes = {f"frame_{idx}": str(val) for idx, val in enumerate(keyframes)}
+        elif isinstance(keyframes, str):
+            keyframes = {"crash": keyframes}
+        verification_plan = item.get("verification_plan")
+        if isinstance(verification_plan, str):
+            verification_plan_list = [line.strip() for line in verification_plan.splitlines() if line.strip()]
+        elif isinstance(verification_plan, list):
+            verification_plan_list = [str(v) for v in verification_plan if v]
+        else:
+            verification_plan_list = []
+
+        payload: dict[str, Any] = {
+            "hypothesis_id": hypothesis_id,
+            "description": item.get("description", ""),
+            "status": status,
+            "keyframes": keyframes,
+            "verification_plan": verification_plan_list,
+            "add_open_questions": item.get("open_questions", []),
+            "add_suggested_steps": item.get("suggested_steps", []),
+            "add_evidence": item.get("add_evidence", []),
+            "priority": item.get("priority", 0),
+        }
+        if marker:
+            payload["phase_marker"] = marker
+        return payload
 
     def _add_templated_messages_to_history(
         self,
