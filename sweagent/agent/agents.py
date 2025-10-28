@@ -182,6 +182,10 @@ class HypothesisConfig(BaseModel):
     reminder_steps: int = 5
     reminder_message: str | None = None
     history_limit: int = 50
+    enable_bootstrap: bool = True
+    bootstrap_message: str | None = None
+    bootstrap_followup_steps: int = 1
+    bootstrap_followup_message: str | None = None
     type: Literal["hypothesis"] = "hypothesis"
 
 
@@ -541,19 +545,26 @@ class DefaultAgent(AbstractAgent):
             action_sampler_config=config.action_sampler,
             hypothesis_config=hypothesis_config,
         )
-        if (
-            hypothesis_config
-            and hypothesis_config.enabled
-            and hypothesis_config.enable_auto_reminder
-        ):
-            from sweagent.agent.hooks.hypothesis_reminder import HypothesisReminderHook
+        if hypothesis_config and hypothesis_config.enabled:
+            if hypothesis_config.enable_bootstrap:
+                from sweagent.agent.hooks.hypothesis_bootstrap import HypothesisBootstrapHook
 
-            agent.add_hook(
-                HypothesisReminderHook(
-                    reminder_steps=hypothesis_config.reminder_steps,
-                    message=hypothesis_config.reminder_message,
+                agent.add_hook(
+                    HypothesisBootstrapHook(
+                        initial_message=hypothesis_config.bootstrap_message,
+                        followup_steps=hypothesis_config.bootstrap_followup_steps,
+                        followup_message=hypothesis_config.bootstrap_followup_message,
+                    )
                 )
-            )
+            if hypothesis_config.enable_auto_reminder:
+                from sweagent.agent.hooks.hypothesis_reminder import HypothesisReminderHook
+
+                agent.add_hook(
+                    HypothesisReminderHook(
+                        reminder_steps=hypothesis_config.reminder_steps,
+                        message=hypothesis_config.reminder_message,
+                    )
+                )
         return agent
 
     def add_hook(self, hook: AbstractAgentHook) -> None:
