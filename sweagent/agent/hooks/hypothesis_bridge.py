@@ -9,6 +9,11 @@ from sweagent.types import AgentInfo, StepOutput
 if TYPE_CHECKING:
     from sweagent.agent.agents import DefaultAgent
 
+from .recon_templates import (
+    RECON_BLUEPRINT_TEMPLATE,
+    RECON_ROUND_FIXUP_TEMPLATES,
+)
+
 
 class HypothesisBridgeHook(AbstractAgentHook):
     """Guides the agent through structured recon survey rounds using explicit markers."""
@@ -195,7 +200,7 @@ class HypothesisBridgeHook(AbstractAgentHook):
         agent = self._agent
         if agent is None:
             return
-        message = "Blueprint still incomplete. Ensure your `hypothesis_update` includes:" + "\n- " + "\n- ".join(issues)
+        message = RECON_BLUEPRINT_TEMPLATE
         agent._append_history(
             {
                 "role": "user",
@@ -245,16 +250,12 @@ class HypothesisBridgeHook(AbstractAgentHook):
         agent = self._agent
         if agent is None:
             return
-        phase_description = {
-            "ROUND12_DONE": "Round 1-2 output",
-            "ROUND3A_DONE": "Round 3a output",
-            "ROUND3B_DONE": "Round 3b output",
-        }.get(marker, "Current round output")
-        message = (
-            f"{phase_description} is incomplete. Please include the missing sections before continuing:\n"
-            + "\n- ".join([""] + issues)
-            + "\nRemember to resend `hypothesis_update` with the same `phase_marker`."
-        )
+        message = RECON_ROUND_FIXUP_TEMPLATES.get(marker)
+        if message is None:
+            message = (
+                "当前回合输出缺失必要段落，请参考系统提示补齐，然后再次发送 "
+                f"`phase_marker`: \"{marker}\" 的 `hypothesis_update`。"
+            )
         agent._append_history(
             {
                 "role": "user",

@@ -8,6 +8,8 @@ from sweagent.types import AgentInfo, StepOutput
 if TYPE_CHECKING:
     from sweagent.agent.agents import DefaultAgent
 
+from .recon_templates import RECON_SEARCH_CHECKLIST, RECON_TRIGGER_REMINDER
+
 
 class ReconDisciplineHook(AbstractAgentHook):
     """Lightweight enforcement of recon survey discipline.
@@ -97,13 +99,7 @@ class ReconDisciplineHook(AbstractAgentHook):
         agent = self._agent
         if agent is None:
             return
-        message = (
-            "Before executing a search, answer the planning checklist in your next response:\n"
-            "1. Which hypothesis (AH-#) are you targeting and why?\n"
-            "2. What evidence gap or Control-Flow ID are you trying to close?\n"
-            "3. What do you expect to find and how will it confirm or refute the hypothesis?\n"
-            "4. Have you already searched this location/keyword? If yes, why is this attempt different?"
-        )
+        message = RECON_SEARCH_CHECKLIST
         agent._append_history(
             {
                 "role": "user",
@@ -118,11 +114,7 @@ class ReconDisciplineHook(AbstractAgentHook):
         agent = self._agent
         if agent is None:
             return
-        message = (
-            "Deep Analysis Trigger reminder: when reading code, state whether any of the triggers (Aggregate assignment, "
-            "Union access, Multi-level dereference, Cross-context passing, Conditional assumptions) apply. "
-            "If triggered, answer the mandatory questions before the next tool call."
-        )
+        message = RECON_TRIGGER_REMINDER
         agent._append_history(
             {
                 "role": "user",
