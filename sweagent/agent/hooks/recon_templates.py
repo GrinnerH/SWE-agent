@@ -1,90 +1,41 @@
-RECON_BLUEPRINT_TEMPLATE = """\
-Blueprint still incomplete. Ensure your `hypothesis_update` contains:
-- primary hypothesis with `description`, `keyframes` (crash/propagation/origin/lifecycle), `verification_plan`, `suggested_steps`, `open_questions`
-- at least one fallback hypothesis (互斥 root cause) with相同字段
-- `phase_marker`: "BLUEPRINT_DONE"
+RECON_SANITIZER_FIXUP = """\
+Recon Stage A (Sanitizer Sweep) is incomplete. Please:
+- Re-run the Stage A narration with the headings `## Sanitizer Analysis` and `## Candidate Hypotheses (unordered)`.
+- List at least **three** mutually exclusive hypotheses, each with a trigger, key object, and quick probe.
+- Call `hypothesis_update` again with `{"phase_marker": "RECON_SANITIZER", ...}` so the board records the update.
+""".strip()
 
-示例:
-```json
-{
-  "phase_marker": "BLUEPRINT_DONE",
-  "hypotheses": [
-    {
-      "id": "H0_primary",
-      "description": "...",
-      "keyframes": {
-        "crash": "...",
-        "propagation": "...",
-        "origin": "...",
-        "lifecycle": "..."
-      },
-      "verification_plan": ["Step 1", "Step 2"],
-      "suggested_steps": ["Action"],
-      "open_questions": ["Unknown"]
-    }
-  ],
-  "fallback_hypotheses": [
-    {
-      "id": "H1_fallback",
-      "description": "...",
-      "keyframes": { "...": "..." },
-      "verification_plan": ["Step"],
-      "open_questions": ["Unknown"]
-    }
-  ]
-}
-```""".strip()
+RECON_STACK_SCAN_FIXUP = """\
+Recon Stage B (Stack Frame Scan) is missing required structure. Output a markdown block containing:
+- `## Hypothesis Ranking` (ordered list with a one-line justification per hypothesis)
+- `## Phenomena to Explain` (facts still unexplained)
+- Optional `## Next Moves` if you already see the PoC path
+Then call `hypothesis_update` with `{"phase_marker": "RECON_STACK_SCAN", ...}` reflecting the new ranking.
+""".strip()
 
-RECON_ROUND_FIXUP_TEMPLATES = {
-    "ROUND12_DONE": """\
-Round 1/2 output缺少必需部分。请重新输出一次 Markdown block，格式如下：
-```
-## Immediate Cause (Round 1)
-- failing operation / object / failure condition
-
-## Origin Trace (Round 2)
-- 价值来源、赋值链、Outstanding questions
-
-## Reasoning State Snapshot
-- Proven Facts ...
-- Refuted Hypotheses ...
-- Active Hypotheses ...
-```
-完成后再次提交 `hypothesis_update`，并设置 `"phase_marker": "ROUND12_DONE"`。
+RECON_STAGE_PROMPTS = {
+    "stack_scan_guidance": """\
+### Stage B – Stack Frame Scan
+- Walk the hottest stack frames (~30 lines each) and stress test every Stage-A hypothesis.
+- Promote/demote hypotheses based on concrete code evidence; keep descriptions short.
+- When finished, write the markdown block (`## Hypothesis Ranking`, `## Phenomena to Explain`) and update the board with `phase_marker`: `"RECON_STACK_SCAN"`.
 """.strip(),
-    "ROUND3A_DONE": """\
-Round 3a 输出缺失，请严格按照以下模板：
-```
-### Question
-### Findings
-### Table Update
-### Hypothesis Impact
-### Reasoning State Update
-```
-补齐内容后，调用 `hypothesis_update`，`"phase_marker": "ROUND3A_DONE"`。
-""".strip(),
-    "ROUND3B_DONE": """\
-Round 3b 输出缺失，请补齐以下段落：
-```
-### Primary Path Exploration
-### Pivot Checkpoint Results
-### Alternative Path Exploration   (如未激活可写 N/A)
-### Table Update
-### Hypothesis Impact
-### Reasoning State Update
-```
-补齐后重新发送 `hypothesis_update`，`"phase_marker": "ROUND3B_DONE"`。
+    "poc_transition": """\
+### Transition to PoC Development
+- Stage B is locked. Now focus on building the minimal PoC that discriminates the leading hypothesis.
+- Deep Analysis Triggers re-activate for any new `open_file`/`search_*` call—answer them before the next tool use.
+- Capture PoC scripts under `/testcase`, validate with `secb build` / `secb repro`, and only then prepare the final report (`phase_marker`: `"FINAL_REPORT"`).
 """.strip(),
 }
 
 RECON_SEARCH_CHECKLIST = """\
-Before executing a search, answer the planning checklist in your next thought:
-1. Which hypothesis (AH-#) are you targeting and why?
-2. What evidence gap或 Control-Flow ID 正在弥补？
-3. 预期结果是什么？如何确认或证伪该假设？
-4. 是否重复搜索？之前结果如何？这次有何不同？
+Before running a search, include in your thought:
+1. Target hypothesis / phenomenon and why it matters now.
+2. Evidence gap or crash behavior you expect to resolve.
+3. Anticipated signal and how it updates your ranking.
+4. Whether this repeats a prior search and what changed.
 """.strip()
 
 RECON_TRIGGER_REMINDER = """\
-Deep Analysis Trigger reminder: 当阅读代码触发聚合赋值、Union 访问、多级指针、跨上下文传递或关键条件分支时，请回答对应问题，然后再进行下一次工具调用。
+Deep Analysis Trigger (PoC mode): aggregate writes, union member swaps, multi-level dereferences, cross-context passes, and guard-rail conditionals all require a short answer before your next tool call.
 """.strip()

@@ -57,6 +57,7 @@ class ReconDisciplineHook(AbstractAgentHook):
 
         lower_action = action.lower()
         step_index = len(agent.trajectory)
+        state = getattr(agent, "_hypothesis_state", None)
 
         if self._is_search_action(lower_action):
             if not self._thought_has_planning(step.thought):
@@ -66,6 +67,8 @@ class ReconDisciplineHook(AbstractAgentHook):
         if self._is_read_action(lower_action):
             observation = (step.output or "") + "\n" + (step.observation or "")
             if "[DEEP DIVE TRIGGER" not in observation:
+                if not self._deep_analysis_allowed(state):
+                    return
                 if step_index - self._last_trigger_reminder_step >= self._reminder_interval:
                     self._send_trigger_reminder(step_index)
 
@@ -124,3 +127,20 @@ class ReconDisciplineHook(AbstractAgentHook):
             }
         )
         self._last_trigger_reminder_step = step_index
+
+    @staticmethod
+    def _latest_marker(state) -> str | None:
+        if state is None:
+            return None
+        for entry in reversed(state.update_log):
+            marker = entry.get("phase_marker")
+            if marker:
+                return marker
+        return None
+
+    def _deep_analysis_allowed(self, state) -> bool:
+        marker = self._latest_marker(state)
+        if marker is None:
+            return False
+        allowed = {"RECON_STACK_SCAN", "FINAL_REPORT", "FINAL_GATE_FAILED"}
+        return marker in allowed

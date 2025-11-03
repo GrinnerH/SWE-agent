@@ -20,52 +20,18 @@ class HypothesisBootstrapHook(AbstractAgentHook):
         followup_message: str | None = None,
     ):
         self.initial_message = initial_message or (
-            "### Recon Survey – Sanitizer Blueprint\n"
-            "1. Combine sanitizer signals and stack frames into a CONTROLLED blueprint.\n"
-            "2. Produce mutually exclusive hypotheses ranked by likelihood.\n"
-            "3. For each hypothesis, list:\n"
-            "   - **Scenario / Root cause statement**\n"
-            "   - **Keyframes**: Crash, Propagation, Origin, Lifecycle\n"
-            "   - **Verification plan**: control-flow & data-flow checks required in Phase 1\n"
-            "4. Call `hypothesis_update` once using this structure:\n"
-            "```json\n"
-            "{\n"
-            "  \"hypothesis_id\": \"H0_primary\",\n"
-            "  \"description\": \"<Primary root cause>\",\n"
-            "  \"keyframes\": {\n"
-            "    \"crash\": \"<What happens at the crash site>\",\n"
-            "    \"propagation\": \"<How the faulty state propagates>\",\n"
-            "    \"origin\": \"<Where the faulty value originates>\",\n"
-            "    \"lifecycle\": \"<Why the value persists until crash>\"\n"
-            "  },\n"
-            "  \"verification_plan\": [\"<Verification step 1>\", \"<Verification step 2>\"],\n"
-            "  \"add_suggested_steps\": [\"<Verification step 1>\", \"<Verification step 2>\"] ,\n"
-            "  \"add_open_questions\": [\"<Outstanding question>\"] ,\n"
-            "  \"new_hypotheses\": [\n"
-            "    {\n"
-            "      \"id\": \"H1_fallback\",\n"
-            "      \"description\": \"<Fallback scenario>\",\n"
-            "      \"status\": \"pending\",\n"
-            "      \"keyframes\": {\n"
-            "        \"crash\": \"<Crash manifestation>\",\n"
-            "        \"propagation\": \"<Propagation path>\",\n"
-            "        \"origin\": \"<Where alternate root cause begins>\",\n"
-            "        \"lifecycle\": \"<Lifecycle assumption>\"\n"
-            "      },\n"
-            "      \"verification_plan\": [\"<Fallback check>\"],\n"
-            "      \"suggested_steps\": [\"<Check>\"] ,\n"
-            "      \"open_questions\": [\"<Key uncertainty>\"]\n"
-            "    }\n"
-            "  ]\n"
-            "}\n"
-            "```\n"
-            "If multiple fallbacks exist, include them in `new_hypotheses`. Highlight Tier-1/2 evidence ids and guardrails (mutual exclusivity, execution order requirements).\n"
-            "When the blueprint is ready, call `hypothesis_update` with `\"phase_marker\": \"BLUEPRINT_DONE\"`."
+            "### Recon Survey – Stage A (Sanitizer Sweep)\n"
+            "1. Read the sanitizer anchor and stack summary.\n"
+            "2. Draft 3–4 mutually exclusive hypotheses that explain the crash signal.\n"
+            "3. For each hypothesis, jot the trigger, key object, and a quick probe (suggested step or log snippet).\n"
+            "4. Publish Stage A with the headings `## Sanitizer Analysis` and `## Candidate Hypotheses (unordered)`.\n"
+            "5. Record the board with a single `hypothesis_update` payload that lists every hypothesis and sets `\"phase_marker\": \"RECON_SANITIZER\"`."
         )
         self.followup_steps = max(followup_steps, 1)
         self.followup_message = followup_message or (
-            "Reminder: produce the recon survey hypothesis blueprint now. Include primary + fallback "
-            "hypotheses, keyframes, verification plan, and outstanding questions via `hypothesis_update`."
+            "Reminder: finish Stage A of the Recon Survey. You need 3–4 mutually exclusive sanitizer-grounded "
+            "hypotheses, the markdown block (`## Sanitizer Analysis`, `## Candidate Hypotheses`), and a "
+            "`hypothesis_update` with `\"phase_marker\": \"RECON_SANITIZER\"` capturing the board."
         )
         self._agent: DefaultAgent | None = None
         self._initial_prompt_sent = False
@@ -131,37 +97,32 @@ class HypothesisBootstrapHook(AbstractAgentHook):
 
     def _check_blueprint(self, state) -> tuple[bool, list[str]]:
         issues: list[str] = []
-        latest_marker = None
-        for entry in reversed(state.update_log):
-            marker = entry.get("phase_marker")
-            if marker:
-                latest_marker = marker
-                break
-        if latest_marker != "BLUEPRINT_DONE":
-            issues.append('call `hypothesis_update` with "phase_marker": "BLUEPRINT_DONE"')
+        latest_marker = self._latest_marker(state)
+        if latest_marker != "RECON_SANITIZER":
+            issues.append('call `hypothesis_update` with "phase_marker": "RECON_SANITIZER" to lock Stage A')
+
+        hypotheses = list(state.hypotheses.values())
+        if len(hypotheses) < 3:
+            issues.append("provide at least three mutually exclusive hypotheses")
 
         active = state.get_active_entry()
         if not active:
-            issues.append("missing primary hypothesis")
-        else:
-            required_keyframes = {"crash", "propagation", "origin", "lifecycle"}
-            keyframe_keys = set(k.lower() for k in active.keyframes.keys())
-            if not required_keyframes.issubset(keyframe_keys):
-                missing = required_keyframes - keyframe_keys
-                issues.append("primary hypothesis missing keyframes: " + ", ".join(sorted(missing)))
-            if not active.verification_plan:
-                issues.append("primary hypothesis missing verification plan")
+            issues.append("no active hypothesis captured after Stage A")
 
-        fallback_hypotheses = [
-            hyp for hyp in state.hypotheses.values() if active and hyp.hypothesis_id != active.hypothesis_id
-        ]
-        if not fallback_hypotheses:
-            issues.append("provide at least one fallback hypothesis")
-        else:
-            for hyp in fallback_hypotheses:
-                if not hyp.keyframes:
-                    issues.append(f"{hyp.hypothesis_id} missing keyframes")
-                if not hyp.verification_plan:
-                    issues.append(f"{hyp.hypothesis_id} missing verification plan")
+        fallbacks = [hyp for hyp in hypotheses if not active or hyp.hypothesis_id != active.hypothesis_id]
+        if len(fallbacks) < 2:
+            issues.append("add at least two fallback hypotheses (Stage A expects 3–4 total)")
+
+        annotated = sum(1 for hyp in hypotheses if hyp.suggested_steps or hyp.open_questions)
+        if annotated < len(hypotheses) - 1:
+            issues.append("include quick probes or open questions for each hypothesis so PoC work has entry points")
 
         return (len(issues) == 0, issues)
+
+    @staticmethod
+    def _latest_marker(state) -> str | None:
+        for entry in reversed(state.update_log):
+            marker = entry.get("phase_marker")
+            if marker:
+                return marker
+        return None
